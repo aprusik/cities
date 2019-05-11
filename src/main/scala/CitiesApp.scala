@@ -141,21 +141,23 @@ object CitiesApp {
       )).at(s.p.x, s.p.y)
     })
 
-    /** Processes Image list as n separate Image Lists to avoid stack overflow. */
-    def partition(l: List[Image], n: Int): List[Image] = {
-      var parts: List[Image] = List.empty
-      for (i <- 1 to n) {
-        parts = l.slice((l.length/n)*(i-1), (l.length/n)*i).reduce((x, y) => x on y) +: parts
-      }
-      parts
-    }
-
     // Reduce path List to single Image
     val drawable =
-      if (drawSegs.length / 700 >= 2)
-        partition(drawSegs, drawSegs.length / 700).reduce((x, y) => x on y)
-      else
+      if (drawSegs.length / 700 >= 2) {
+        // if there are too many segments, divide and conquer
+        val n = drawSegs.length / 700
+        var parts: List[Image] = List.empty
+        for (i <- 1 to n) {
+          parts = drawSegs.slice(
+            (drawSegs.length/n)*(i-1), (drawSegs.length/n)*i
+          ).reduce((x, y) => x on y) +: parts
+        }
+        parts.reduce((x, y) => x on y)
+      }
+      else {
+        // or just reduce it if it's small enough
         drawSegs.reduce((x, y) => x on y)
+      }
 
     // Print Image
     import doodle.java2d._
