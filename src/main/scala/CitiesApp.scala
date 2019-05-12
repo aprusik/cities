@@ -10,6 +10,7 @@ import scala.util.Random
 
 /** Procedurally generates city maps as a road network. */
 object CitiesApp {
+  //================ CONSTANTS ================
   // Size of each road segment
   val GrowDist: Double = 5
   // Number of road segments to generate
@@ -18,19 +19,52 @@ object CitiesApp {
   val MaxAngle: Int = 10
   // Probability (out of 1) that a branch will be created
   val BranchProb: Double = 0.07
+  // Seed for random number generator
+  val Seed: Int = 0
 
-  val rand = new Random()
-
-  /** Represents a road segment with a time of creation, segment, and metadata */
+  //============== CASE CLASSES ===============
+  /** A road segment.
+    *
+    * @param time order of creation (starting at 0)
+    * @param seg coordinate segment of road
+    * @param meta metadata
+    */
   case class road(time: Int, seg: segment, meta: roadMeta)
-  /** Represents a line segment with a point and vector. */
-  case class segment(p: Point, v: Vec) {
-    override def toString: String = s"${p.toString} $end"
-    def end: Point = p + v
+  /** Factory for [[road]] instances. */
+  object road {
+    /** Creates a road at an offset from a segment.
+      *
+      * @param seg segment to extend road from
+      * @param off degrees of offset from the randomly determined angle
+      * @return a new road starting at the end of segment and angled in the
+      *         direction of a randomly determined angle between 0 and
+      *         [[MaxAngle]] + the offset.
+      */
+    def apply(seg: segment, off: Int): road = {
+      road(0,
+        segment(seg.end, Vec.polar(GrowDist, off.degrees + seg.v.angle +
+          (rand.nextInt(MaxAngle*2) - MaxAngle).degrees)),
+        roadMeta()
+      )
+    }
   }
-  /** Represents road segment metadata. */
+
+  /** Road metadata */
   case class roadMeta()
 
+  /** A line segment defined by a point and a vector
+    *
+    * @param p starting point of segment
+    * @param v vector to extend from [[p]]
+    */
+  case class segment(p: Point, v: Vec) {
+    /** Returns a string of the format: "[start point] [end point]". */
+    override def toString: String = s"${p.toString} $end"
+    /** Returns the result of adding [[v]] to [[p]] */
+    def end: Point = p + v
+  }
+
+  //================ VARIABLES ================
   // Queue for temporarily holding unprocessed road segments
   val q: mutable.PriorityQueue[road] = mutable.PriorityQueue[road](
     road(0, segment(Point.zero, Vec.zero), roadMeta())
@@ -38,8 +72,32 @@ object CitiesApp {
 
   // List of all line segments in the road network generated so far
   var segs: List[segment] = Nil
+
   // Set of all intersection points
   var points: Set[Point] = Set.empty
+
+  // Random number generator
+  val rand = new Random(Seed)
+
+  //================= METHODS =================
+  /** Checks if two line segments intersect.
+    *
+    * @param s1 segment 1
+    * @param s2 segment 2
+    * @return If there is an intersection, an option containing the intersection
+    *         point, otherwise None
+    */
+  def intersects(s1: segment, s2: segment): Option[Point] = {
+    val t = (s2.p - s1.p) cross (s2.v / (s1.v cross s2.v))
+    val u = (s2.p - s1.p) cross (s1.v / (s1.v cross s2.v))
+    if ((s1.v cross s2.v) != 0 && (0<=t && t<=1) && (0<=u && u<=1)) {
+      if ((s1.v * t).length < 0.0000001)
+        None
+      else
+        Some(s1.p + (s1.v * t))
+    }
+    else None
+  }
 
   /** Checks the given road for conformity to local constraints, and modifies
     *
@@ -74,47 +132,12 @@ object CitiesApp {
     * @return
     */
   def globalGoals(seg: segment, meta: roadMeta): List[road] = {
-    var newSegs = List(road(0, segment(
-      seg.end,
-      Vec.polar(GrowDist, seg.v.angle +
-        (rand.nextInt(MaxAngle*2) - MaxAngle).degrees)),
-      roadMeta()))
-    if (rand.nextDouble() < BranchProb) {
-      newSegs =
-        road(0, segment(
-        seg.end,
-        Vec.polar(GrowDist, -90.degrees + seg.v.angle +
-          (rand.nextInt(MaxAngle*2) - MaxAngle).degrees)),
-        roadMeta()) +: newSegs
-    }
-    else if (rand.nextDouble() < BranchProb) {
-      newSegs =
-        road(0, segment(
-          seg.end,
-          Vec.polar(GrowDist, 90.degrees + seg.v.angle +
-            (rand.nextInt(MaxAngle*2) - MaxAngle).degrees)),
-          roadMeta()) +: newSegs
-    }
+    var newSegs = List(road(seg, 0))
+    if (rand.nextDouble() < BranchProb)
+      newSegs = road(seg, -90) +: newSegs
+    else if (rand.nextDouble() < BranchProb)
+      newSegs = road(seg, 90) +: newSegs
     newSegs
-  }
-
-  /** Checks if two line segments intersect.
-    *
-    * @param s1 segment 1
-    * @param s2 segment 2
-    * @return If there is an intersection, an option containing the intersection
-    *         point, otherwise None
-    */
-  def intersects(s1: segment, s2: segment): Option[Point] = {
-    val t = (s2.p - s1.p) cross (s2.v / (s1.v cross s2.v))
-    val u = (s2.p - s1.p) cross (s1.v / (s1.v cross s2.v))
-    if ((s1.v cross s2.v) != 0 && (0<=t && t<=1) && (0<=u && u<=1)) {
-      if ((s1.v * t).length < 0.0000001)
-        None
-      else
-        Some(s1.p + (s1.v * t))
-    }
-    else None
   }
 
   /** Creates a window displaying a procedurally generated road network. */
