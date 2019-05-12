@@ -80,3 +80,6 @@ fabric.properties
 .idea/vcs.xml
 project/build.properties
 src/test/
+
+### Custom
+*.sc

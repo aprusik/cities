@@ -12,15 +12,17 @@ import scala.util.Random
 object CitiesApp {
   //================ CONSTANTS ================
   // Size of each road segment
-  val GrowDist: Double = 5
+  val GrowDist: Double = 2
   // Number of road segments to generate
-  val MaxSegs: Int = 500
+  val MaxSegs: Int = 1000
   // Max deviation from 0 degrees a road segment should be able to turn
   val MaxAngle: Int = 10
   // Probability (out of 1) that a branch will be created
-  val BranchProb: Double = 0.07
+  val BranchProb: Double = 0.01
   // Seed for random number generator
   val Seed: Int = 0
+  //
+  val SnapDist: Double = 1.9
 
   //============== CASE CLASSES ===============
   /** A road segment.
@@ -49,8 +51,11 @@ object CitiesApp {
     }
   }
 
-  /** Road metadata */
-  case class roadMeta()
+  /** Road metadata
+    *
+    * @param ended true if the road should no longer have new segments generated
+    */
+  case class roadMeta(ended: Boolean = false, color: Int = 0)
 
   /** A line segment defined by a point and a vector
     *
@@ -62,6 +67,8 @@ object CitiesApp {
     override def toString: String = s"${p.toString} $end"
     /** Returns the result of adding [[v]] to [[p]] */
     def end: Point = p + v
+    /** Returns a new segment with the length multiplied by x. */
+    def *(x: Double): segment = segment(p, v * x)
   }
 
   //================ VARIABLES ================
@@ -71,10 +78,10 @@ object CitiesApp {
   )(Ordering.by(-_.time))
 
   // List of all line segments in the road network generated so far
-  var segs: List[segment] = Nil
+  var segs: List[road] = Nil
 
   // Set of all intersection points
-  var points: Set[Point] = Set.empty
+  var points: KdTree2 = new KdTree2
 
   // Random number generator
   val rand = new Random(Seed)
@@ -107,18 +114,34 @@ object CitiesApp {
     * @return true if the local constraints can be satisfied, false otherwise
     */
   def localConstraints(r: road, f: Function[road, Unit]): Boolean = {
-    // check for intersection
-    segs.exists(s => {
-      val inter = intersects(r.seg, s)
-      if (inter.isDefined) {
-        if (inter.get != s.p && inter.get != s.end)
+    // Check for nearby crossings
+    if (points.size > 0) {
+      val near = points.nearestTo(r.seg.end, 10)
+      val dist = (near(0)._1 - r.seg.end).length
+      if (dist <= SnapDist && dist >= 0.0000001) {
         f(road(
           r.time,
-          segment(r.seg.p, inter.get - r.seg.p),
-          r.meta))
+          segment(r.seg.p, near(0)._1 - r.seg.p),
+          roadMeta(ended = true, 1)
+        ))
       }
-      inter.isDefined
-    })
+      else {
+        // check for intersection
+        near.exists(n => {
+          val s = n._2
+          val inter = intersects(r.seg * 2, s)
+          if (inter.isDefined) {
+            if (inter.get != s.p && inter.get != s.end)
+              f(road(
+                r.time,
+                segment(r.seg.p, inter.get - r.seg.p),
+                roadMeta(ended = true))
+              )
+          }
+          inter.isDefined
+        })
+      }
+    }
     // right now there aren't any illegal areas, just modified ones, so just
     // return true.  This may change in the future though, so still return
     // boolean.
@@ -132,12 +155,16 @@ object CitiesApp {
     * @return
     */
   def globalGoals(seg: segment, meta: roadMeta): List[road] = {
-    var newSegs = List(road(seg, 0))
-    if (rand.nextDouble() < BranchProb)
-      newSegs = road(seg, -90) +: newSegs
-    else if (rand.nextDouble() < BranchProb)
-      newSegs = road(seg, 90) +: newSegs
-    newSegs
+    if (!meta.ended) {
+      var newSegs = List(road(seg, 0))
+      if (rand.nextDouble() < BranchProb)
+        newSegs = road(seg, -90) +: newSegs
+      else if (rand.nextDouble() < BranchProb)
+        newSegs = road(seg, 90) +: newSegs
+      newSegs
+    }
+    else
+      List[road]()
   }
 
   /** Creates a window displaying a procedurally generated road network. */
@@ -147,9 +174,8 @@ object CitiesApp {
       var rd: road = q.dequeue()
       val accepted: Boolean = localConstraints(rd, x => rd = x)
       if (accepted) {
-        segs = rd.seg +: segs
-        points = points + rd.seg.p
-        points = points + (rd.seg.p + rd.seg.v)
+        segs = rd +: segs
+        points.insert(rd.seg.p, rd.seg)
         for (r <- globalGoals(rd.seg, rd.meta)) {
           q.enqueue(road(r.time + 1 + rd.time, r.seg, r.meta))
         }
@@ -158,10 +184,12 @@ object CitiesApp {
 
     // Convert Segments to Paths
     val drawSegs = segs.map(s => {
-      Image.openPath(List(
-        moveTo(s.p),
-        lineTo(s.end + s.v)
-      )).at(s.p.x, s.p.y)
+      val i = Image.openPath(List(
+        moveTo(s.seg.p),
+        lineTo(s.seg.end + s.seg.v)
+      )).at(s.seg.p.x, s.seg.p.y)
+      if (s.meta.color == 1) i.strokeColor(Color.red)
+      else i
     })
 
     // Reduce path List to single Image
