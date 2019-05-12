@@ -68,3 +68,15 @@ fabric.properties
 
 # Editor-based Rest Client
 .idea/httpRequests
+
+### Unrevisioned
+.idea/deployment.xml
+.idea/encodings.xml
+.idea/misc.xml
+.idea/modules.xml
+.idea/modules/
+.idea/sbt.xml
+.idea/scala_compiler.xml
+.idea/vcs.xml
+project/build.properties
+src/test/
