@@ -12,17 +12,20 @@ import scala.util.Random
 object CitiesApp {
   //================ CONSTANTS ================
   // Size of each road segment
-  val GrowDist: Double = 2
+  val GrowDist: Double = 5
   // Number of road segments to generate
-  val MaxSegs: Int = 1000
+  val MaxSegs: Int = 10000
   // Max deviation from 0 degrees a road segment should be able to turn
   val MaxAngle: Int = 10
   // Probability (out of 1) that a branch will be created
-  val BranchProb: Double = 0.01
+  val BranchProb: Double = 0.05
+  val StreetBranchProb = 0.5
   // Seed for random number generator
-  val Seed: Int = 0
+  val Seed: Int = 10
   //
-  val SnapDist: Double = 1.9
+  val SnapDist: Double = 3
+  //
+  val NoiseScale: Double = 100
 
   //============== CASE CLASSES ===============
   /** A road segment.
@@ -43,11 +46,13 @@ object CitiesApp {
       *         [[MaxAngle]] + the offset.
       */
     def apply(seg: segment, off: Int): road = {
-      road(0,
-        segment(seg.end, Vec.polar(GrowDist, off.degrees + seg.v.angle +
-          (rand.nextInt(MaxAngle*2) - MaxAngle).degrees)),
-        roadMeta()
-      )
+      var possSegs: List[segment] = Nil
+      possSegs = segment(seg.end,
+        Vec.polar(GrowDist, off.degrees + seg.v.angle)) +: possSegs
+      possSegs = segment(seg.end,
+        Vec.polar(GrowDist, off.degrees + seg.v.angle +
+        (rand.nextInt(MaxAngle*2) - MaxAngle).degrees)) +: possSegs
+      road(0, possSegs.maxBy(s => getNoise(s.end)), roadMeta())
     }
   }
 
@@ -55,7 +60,7 @@ object CitiesApp {
     *
     * @param ended true if the road should no longer have new segments generated
     */
-  case class roadMeta(ended: Boolean = false, color: Int = 0)
+  case class roadMeta(ended: Boolean = false, color: Int = 0, street: Boolean = false)
 
   /** A line segment defined by a point and a vector
     *
@@ -86,7 +91,29 @@ object CitiesApp {
   // Random number generator
   val rand = new Random(Seed)
 
+  val noise1: OpenSimplexNoise = new OpenSimplexNoise(Seed)
+  val noise2: OpenSimplexNoise = new OpenSimplexNoise(Seed)
+  val noise3: OpenSimplexNoise = new OpenSimplexNoise(Seed)
+
+  var maxX: Int = 0
+  var maxY: Int = 0
+  var minX: Int = 0
+  var minY: Int = 0
+
   //================= METHODS =================
+  def updateBounds(p: Point): Unit = {
+    if (p.x > maxX) maxX = p.x.toInt
+    if (p.x < minX) minX = p.x.toInt
+    if (p.y > maxY) maxY = p.y.toInt
+    if (p.y < minY) minY = p.y.toInt
+  }
+
+  def getNoise(p: Point): Double = {
+    noise1.eval(p.x / NoiseScale, p.y / NoiseScale, 0.0) *
+    noise2.eval(p.x / NoiseScale, p.y / NoiseScale, 0.0) *
+    noise3.eval(p.x / NoiseScale, p.y / NoiseScale, 0.0)
+  }
+
   /** Checks if two line segments intersect.
     *
     * @param s1 segment 1
@@ -103,6 +130,8 @@ object CitiesApp {
       else
         Some(s1.p + (s1.v * t))
     }
+    else if ((s1.p == s2.p && s1.end == s2.end) || (s1.p == s2.end && s1.end == s2.p))
+      Some(s1.p)
     else None
   }
 
@@ -122,7 +151,7 @@ object CitiesApp {
         f(road(
           r.time,
           segment(r.seg.p, near(0)._1 - r.seg.p),
-          roadMeta(ended = true, 1)
+          roadMeta(ended = true, 0, street = r.meta.street)
         ))
       }
       else {
@@ -135,7 +164,7 @@ object CitiesApp {
               f(road(
                 r.time,
                 segment(r.seg.p, inter.get - r.seg.p),
-                roadMeta(ended = true))
+                roadMeta(ended = true, 0, street = r.meta.street))
               )
           }
           inter.isDefined
@@ -156,11 +185,41 @@ object CitiesApp {
     */
   def globalGoals(seg: segment, meta: roadMeta): List[road] = {
     if (!meta.ended) {
-      var newSegs = List(road(seg, 0))
-      if (rand.nextDouble() < BranchProb)
-        newSegs = road(seg, -90) +: newSegs
-      else if (rand.nextDouble() < BranchProb)
-        newSegs = road(seg, 90) +: newSegs
+      var newSegs =
+        if (!meta.street)
+          List(road(seg, 0))
+        else {
+          if (getNoise(seg.p) < 0)
+            List(road(
+              0,
+              segment(seg.end, Vec.polar(GrowDist, seg.v.angle)),
+              roadMeta(street = true)
+            ))
+          else
+            List.empty
+        }
+      if (rand.nextDouble() < BranchProb && getNoise(seg.p) < 0 && !meta.street) {
+        if (rand.nextInt(100) < 50)
+          newSegs = road(seg, 90) +: newSegs
+        else
+          newSegs = road(seg, -90) +: newSegs
+      }
+      if (rand.nextDouble() < StreetBranchProb && getNoise(seg.p) < 0) {
+        if (rand.nextInt(100) < 50)
+          newSegs = road(
+            0,
+            segment(seg.end, Vec.polar(GrowDist, 90.degrees +
+              rand.nextInt(MaxAngle).degrees + seg.v.angle)),
+            roadMeta(street = true)
+          ) +: newSegs
+        else
+          newSegs = road(
+            0,
+            segment(seg.end, Vec.polar(GrowDist, -90.degrees -
+              rand.nextInt(MaxAngle).degrees + seg.v.angle)),
+            roadMeta(street = true)
+          ) +: newSegs
+      }
       newSegs
     }
     else
@@ -176,6 +235,7 @@ object CitiesApp {
       if (accepted) {
         segs = rd +: segs
         points.insert(rd.seg.p, rd.seg)
+        updateBounds(rd.seg.p)
         for (r <- globalGoals(rd.seg, rd.meta)) {
           q.enqueue(road(r.time + 1 + rd.time, r.seg, r.meta))
         }
@@ -189,11 +249,14 @@ object CitiesApp {
         lineTo(s.seg.end + s.seg.v)
       )).at(s.seg.p.x, s.seg.p.y)
       if (s.meta.color == 1) i.strokeColor(Color.red)
+      else if (!s.meta.street) i.strokeColor(Color.blue)
+      else if (s.meta.color == 2) i.strokeColor(Color.blue)
+      else if (getNoise(s.seg.p) > 0) i.strokeColor(Color.green)
       else i
     })
 
     // Reduce path List to single Image
-    val drawable =
+    var drawable =
       if (drawSegs.length / 700 >= 2) {
         // if there are too many segments, divide and conquer
         val n = drawSegs.length / 700
@@ -210,6 +273,18 @@ object CitiesApp {
         drawSegs.reduce((x, y) => x on y)
       }
 
+//    var population: Image = Image.empty
+//    for (x <- minX*2 to maxX*2 by 50;
+//         y <- minY*2 to maxY*2 by 50) {
+//      val square = Image.square(50).at(x, y).fillColor(
+//        if (getNoise(Point(x, y)) > 0)
+//          Color.green.lighten(getNoise(Point(x, y)).normalized)
+//        else
+//          Color.blue
+//      ).noStroke
+//      population = square on population
+//    }
+//    drawable = drawable on population
     // Print Image
     import doodle.java2d._
     drawable.draw()
